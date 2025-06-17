@@ -1,2 +1,1 @@
-hellow world
-changes 
+console.log("Hello world");
