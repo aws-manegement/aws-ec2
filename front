@@ -1,2 +1,208 @@
-hellow world
-changes 
+#!/usr/bin/env python3
+# AWS EC2 Operations
+
+import boto3
+import sys
+import argparse
+from botocore.exceptions import ClientError
+
+def list_instances():
+    """
+    List all EC2 instances with their details
+    """
+    ec2 = boto3.resource('ec2')
+    instances = ec2.instances.all()
+    
+    print("Instance ID\t\tState\t\tInstance Type\tPublic IP\tPrivate IP\tName")
+    print("-" * 90)
+    
+    for instance in instances:
+        name = "N/A"
+        for tag in instance.tags or []:
+            if tag['Key'] == 'Name':
+                name = tag['Value']
+                break
+        
+        print(f"{instance.id}\t{instance.state['Name']}\t{instance.instance_type}\t"
+              f"{instance.public_ip_address or 'N/A'}\t{instance.private_ip_address or 'N/A'}\t{name}")
+
+def start_instance(instance_id):
+    """
+    Start an EC2 instance
+    """
+    ec2 = boto3.resource('ec2')
+    instance = ec2.Instance(instance_id)
+    
+    try:
+        response = instance.start()
+        print(f"Starting instance {instance_id}")
+        print(f"Current state: {response['StartingInstances'][0]['CurrentState']['Name']}")
+    except ClientError as e:
+        print(f"Error starting instance {instance_id}: {e}")
+
+def stop_instance(instance_id):
+    """
+    Stop an EC2 instance
+    """
+    ec2 = boto3.resource('ec2')
+    instance = ec2.Instance(instance_id)
+    
+    try:
+        response = instance.stop()
+        print(f"Stopping instance {instance_id}")
+        print(f"Current state: {response['StoppingInstances'][0]['CurrentState']['Name']}")
+    except ClientError as e:
+        print(f"Error stopping instance {instance_id}: {e}")
+
+def create_instance(instance_type, ami_id, key_name=None, security_group_ids=None, subnet_id=None, name=None):
+    """
+    Create a new EC2 instance
+    """
+    ec2 = boto3.resource('ec2')
+    
+    create_args = {
+        'ImageId': ami_id,
+        'InstanceType': instance_type,
+        'MinCount': 1,
+        'MaxCount': 1
+    }
+    
+    if key_name:
+        create_args['KeyName'] = key_name
+    
+    if security_group_ids:
+        create_args['SecurityGroupIds'] = security_group_ids
+    
+    if subnet_id:
+        create_args['SubnetId'] = subnet_id
+    
+    if name:
+        create_args['TagSpecifications'] = [
+            {
+                'ResourceType': 'instance',
+                'Tags': [
+                    {
+                        'Key': 'Name',
+                        'Value': name
+                    }
+                ]
+            }
+        ]
+    
+    try:
+        instances = ec2.create_instances(**create_args)
+        instance_id = instances[0].id
+        print(f"Created instance {instance_id}")
+        print(f"Waiting for instance to be running...")
+        instances[0].wait_until_running()
+        print(f"Instance {instance_id} is now running")
+        return instance_id
+    except ClientError as e:
+        print(f"Error creating instance: {e}")
+        return None
+
+def terminate_instance(instance_id):
+    """
+    Terminate an EC2 instance
+    """
+    ec2 = boto3.resource('ec2')
+    instance = ec2.Instance(instance_id)
+    
+    try:
+        response = instance.terminate()
+        print(f"Terminating instance {instance_id}")
+        print(f"Current state: {response['TerminatingInstances'][0]['CurrentState']['Name']}")
+    except ClientError as e:
+        print(f"Error terminating instance {instance_id}: {e}")
+
+def describe_instance(instance_id):
+    """
+    Get detailed information about an EC2 instance
+    """
+    ec2 = boto3.resource('ec2')
+    try:
+        instance = ec2.Instance(instance_id)
+        
+        print(f"Instance ID: {instance.id}")
+        print(f"Instance State: {instance.state['Name']}")
+        print(f"Instance Type: {instance.instance_type}")
+        print(f"AMI ID: {instance.image_id}")
+        print(f"Launch Time: {instance.launch_time}")
+        print(f"Public IP: {instance.public_ip_address or 'N/A'}")
+        print(f"Private IP: {instance.private_ip_address or 'N/A'}")
+        print(f"VPC ID: {instance.vpc_id or 'N/A'}")
+        print(f"Subnet ID: {instance.subnet_id or 'N/A'}")
+        
+        if instance.key_name:
+            print(f"Key Name: {instance.key_name}")
+        
+        print("Security Groups:")
+        for sg in instance.security_groups:
+            print(f"  - {sg['GroupId']} ({sg['GroupName']})")
+        
+        if instance.tags:
+            print("Tags:")
+            for tag in instance.tags:
+                print(f"  - {tag['Key']}: {tag['Value']}")
+    except ClientError as e:
+        print(f"Error describing instance {instance_id}: {e}")
+
+def main():
+    parser = argparse.ArgumentParser(description='AWS EC2 Instance Operations')
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # List instances command
+    subparsers.add_parser('list', help='List all EC2 instances')
+    
+    # Start instance command
+    start_parser = subparsers.add_parser('start', help='Start an EC2 instance')
+    start_parser.add_argument('instance_id', help='ID of the instance to start')
+    
+    # Stop instance command
+    stop_parser = subparsers.add_parser('stop', help='Stop an EC2 instance')
+    stop_parser.add_argument('instance_id', help='ID of the instance to stop')
+    
+    # Create instance command
+    create_parser = subparsers.add_parser('create', help='Create a new EC2 instance')
+    create_parser.add_argument('--type', required=True, help='Instance type (e.g., t2.micro)')
+    create_parser.add_argument('--ami', required=True, help='AMI ID to use')
+    create_parser.add_argument('--key', help='Key pair name')
+    create_parser.add_argument('--security-groups', nargs='+', help='Security group IDs')
+    create_parser.add_argument('--subnet', help='Subnet ID')
+    create_parser.add_argument('--name', help='Name tag for the instance')
+    
+    # Terminate instance command
+    terminate_parser = subparsers.add_parser('terminate', help='Terminate an EC2 instance')
+    terminate_parser.add_argument('instance_id', help='ID of the instance to terminate')
+    
+    # Describe instance command
+    describe_parser = subparsers.add_parser('describe', help='Get detailed information about an EC2 instance')
+    describe_parser.add_argument('instance_id', help='ID of the instance to describe')
+    
+    args = parser.parse_args()
+    
+    if args.command == 'list':
+        list_instances()
+    elif args.command == 'start':
+        start_instance(args.instance_id)
+    elif args.command == 'stop':
+        stop_instance(args.instance_id)
+    elif args.command == 'create':
+        create_instance(
+            args.type, 
+            args.ami, 
+            args.key, 
+            args.security_groups, 
+            args.subnet, 
+            args.name
+        )
+    elif args.command == 'terminate':
+        terminate_instance(args.instance_id)
+    elif args.command == 'describe':
+        describe_instance(args.instance_id)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
